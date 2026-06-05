@@ -1,0 +1,621 @@
+/*
+ * Copyright (c) 2017 Fuzhou Rockchip Electronics Co., Ltd
+ *
+ * This file is dual-licensed: you can use it either under the terms
+ * of the GPL or the X11 license, at your option. Note that this dual
+ * licensing only applies to this file, and not this project as a
+ * whole.
+ *
+ *  a) This file is free software; you can redistribute it and/or
+ *     modify it under the terms of the GNU General Public License as
+ *     published by the Free Software Foundation; either version 2 of the
+ *     License, or (at your option) any later version.
+ *
+ *     This file is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *  Or, alternatively,
+ *
+ *  b) Permission is hereby granted, free of charge, to any person
+ *     obtaining a copy of this software and associated documentation
+ *     files (the "Software"), to deal in the Software without
+ *     restriction, including without limitation the rights to use,
+ *     copy, modify, merge, publish, distribute, sublicense, and/or
+ *     sell copies of the Software, and to permit persons to whom the
+ *     Software is furnished to do so, subject to the following
+ *     conditions:
+ *
+ *     The above copyright notice and this permission notice shall be
+ *     included in all copies or substantial portions of the Software.
+ *
+ *     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ *     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ *     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ *     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ *     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ *     OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/dts-v1/;
+
+#include "rk322x.dtsi"
+#include "rk3229-cpu-opp.dtsi"
+#include "rk322x-android.dtsi"
+
+/ {
+	model = "Generic RK3229 TVBox";
+	compatible = "rockchip,rk3229-tvbox", "rockchip,rk3229";
+
+	/*
+	 * TVbox から検出: メモリは 1GB (0x40000000)
+	 * 開始アドレス 0x60000000 (DDR3 配置)
+	 */
+	memory@60000000 {
+		device_type = "memory";
+		reg = <0x60000000 0x40000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		trust_reserved: trust@0x68400000 {
+			reg = <0x68400000 0xe00000>;
+			no-map;
+		};
+	};
+
+	/* ---- 電源レギュレータ ---- */
+	regulators {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		vccio_1v8_reg: regulator@0 {
+			compatible = "regulator-fixed";
+			regulator-name = "vccio_1v8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+		};
+
+		vccio_3v3_reg: regulator@1 {
+			compatible = "regulator-fixed";
+			regulator-name = "vccio_3v3";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-always-on;
+		};
+	};
+
+	/*
+	 * TVbox: vdd_arm は PWM1 (0x110b0010) で制御
+	 * rockchip,pwm_id=1, voltage_map から voltage range を取得
+	 * OSS の pwm-regulator に変換
+	 */
+	vdd_arm: vdd-arm-regulator {
+		compatible = "pwm-regulator";
+		rockchip,pwm_id = <1>;
+		rockchip,pwm_voltage = <1100000>;
+		pwms = <&pwm1 0 25000 1>;
+		regulator-name = "vdd_arm";
+		/* TVbox: min=0xe7ef0=950000, max=0x155cc0=1400000 */
+		regulator-min-microvolt = <950000>;
+		regulator-max-microvolt = <1400000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
+	 * TVbox: vdd_logic は PWM2 (0x110b0020) で制御
+	 * rockchip,pwm_id=2
+	 */
+	vdd_log: vdd-log-regulator {
+		compatible = "pwm-regulator";
+		rockchip,pwm_id = <2>;
+		rockchip,pwm_voltage = <1200000>;
+		pwms = <&pwm2 0 25000 1>;
+		regulator-name = "vdd_log";
+		/* TVbox: min=0xf4240=1000000, max=0x13d620=1300000 */
+		regulator-min-microvolt = <1000000>;
+		regulator-max-microvolt = <1300000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/* ---- USB 電源制御 ---- */
+	/*
+	 * TVbox: host_drv_gpio = GPIO3_D4 (gpio3, pin 20+ビット)
+	 * gpio3 = phandle 0xb4 → GPIO3, 0x14=20 → RK_PC4
+	 * otg_drv_gpio = GPIO3_D6 (0x16=22 → RK_PC6)
+	 */
+	vcc_host: vcc-host-regulator {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio3 RK_PC4 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&host_vbus_drv>;
+		regulator-name = "vcc_host";
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vcc_otg_vbus: otg-vbus-regulator {
+		compatible = "regulator-fixed";
+		gpio = <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&otg_vbus_drv>;
+		regulator-name = "vcc_otg_vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+	};
+
+	vcc_phy: vcc-phy-regulator {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		regulator-name = "vcc_phy";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/* ---- SDIO / WiFi 電源シーケンス ---- */
+	/*
+	 * TVbox: wifi_chip_type = "ap6330", WIFI,poweren_gpio = GPIO2_D2 (gpio2, 26)
+	 * OSS の mmc-pwrseq-simple に変換
+	 */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_enable_h>;
+		/* GPIO2_D2 = gpio2, pin 26 */
+		reset-gpios = <&gpio2 26 GPIO_ACTIVE_LOW>;
+	};
+
+	/* ---- サウンド ---- */
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,rk3229";
+		simple-audio-card,cpu {
+			sound-dai = <&i2s1>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&codec>;
+		};
+	};
+
+	hdmi_sound: hdmi-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,hdmi";
+		simple-audio-card,cpu {
+			sound-dai = <&i2s0>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&hdmi>;
+		};
+	};
+
+	spdif_out: spdif-out {
+		status = "okay";
+		compatible = "linux,spdif-dit";
+		#sound-dai-cells = <0>;
+	};
+
+	spdif-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "ROCKCHIP,SPDIF";
+		simple-audio-card,cpu {
+			sound-dai = <&spdif>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&spdif_out>;
+		};
+	};
+
+	/* ---- WiFi プラットフォーム情報 ---- */
+	/*
+	 * TVbox: wifi_chip_type="ap6330", sdio_vref=0x708=1800
+	 * WIFI,host_wake_irq = GPIO0 pin 0x1c=28
+	 */
+	wireless-wlan {
+		compatible = "wlan-platdata";
+		rockchip,grf = <&grf>;
+		wifi_chip_type = "ap6330";
+		sdio_vref = <1800>;
+		/* GPIO0_D4 = gpio0, pin 28 */
+		WIFI,host_wake_irq = <&gpio0 28 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+
+	/* ---- Bluetooth ---- */
+	/*
+	 * TVbox: BT,power_gpio = GPIO2_D5 (gpio2, 29=0x1d)
+	 * BT,wake_gpio = GPIO3_D3 (gpio3, 27=0x1b)
+	 * BT,wake_host_irq = GPIO3_D2 (gpio3, 26=0x1a)
+	 * LED,blue_gpio = GPIO1_A7 (gpio1, 7=0x07)
+	 * LED,red_gpio = GPIO3_C5 (gpio3, 21=0x15)
+	 * uart_rts_gpios = GPIO3_A6 (gpio3, 6=0x06)
+	 */
+	wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		uart_rts_gpios = <&gpio3 6 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default", "rts_gpio";
+		pinctrl-0 = <&uart11_rts>;
+		pinctrl-1 = <&uart11_rts_gpio>;
+		BT,power_gpio  = <&gpio2 29 GPIO_ACTIVE_HIGH>;
+		BT,wake_gpio   = <&gpio3 27 GPIO_ACTIVE_HIGH>;
+		BT,wake_host_irq = <&gpio3 26 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+};
+
+/* ---- CPU 電源供給 ---- */
+&cpu0 {
+	cpu-supply = <&vdd_arm>;
+};
+
+/* ---- GPU ---- */
+&gpu {
+	status = "okay";
+	mali-supply = <&vdd_log>;
+};
+
+/* ---- HDMI ---- */
+&hdmi {
+	status = "okay";
+	#sound-dai-cells = <0>;
+	ddc-i2c-scl-high-time-ns = <9625>;
+	ddc-i2c-scl-low-time-ns = <10000>;
+};
+
+/* ---- IO domains ---- */
+/*
+ * TVbox: vccio1=3v3, vccio2=1v8, vccio4=3v3
+ */
+&io_domains {
+	status = "okay";
+	vccio1-supply = <&vccio_3v3_reg>;
+	vccio2-supply = <&vccio_1v8_reg>;
+	vccio4-supply = <&vccio_3v3_reg>;
+};
+
+/* ---- I2C ---- */
+&i2c0 {
+	status = "okay";
+	/* TVbox には nau8540 が i2c1 (0x11060000) にあるが
+	 * OSS EVB では i2c0 に RTC (hym8563) を追加 */
+};
+
+/* ---- I2S ---- */
+&i2s0 {
+	status = "okay";
+	rockchip,bclk-fs = <128>;
+	#sound-dai-cells = <0>;
+};
+
+&i2s1 {
+	#sound-dai-cells = <0>;
+	status = "okay";
+};
+
+/* ---- Codec ---- */
+/*
+ * TVbox: spk_ctl_io = GPIO1_A5 (gpio1, 5=0x05)
+ * OSS の spk-en-gpio に変換
+ */
+&codec {
+	#sound-dai-cells = <0>;
+	status = "okay";
+	spk-en-gpio = <&gpio1 RK_PA3 GPIO_ACTIVE_HIGH>;
+};
+
+/* ---- SPDIF ---- */
+&spdif {
+	status = "okay";
+	#sound-dai-cells = <0>;
+};
+
+/* ---- Thermal / TSADC ---- */
+&tsadc {
+	status = "okay";
+};
+
+/* ---- PWM (電圧制御用) ---- */
+&pwm1 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm1_pin_pull_down>;
+};
+
+&pwm2 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm2_pin_pull_up>;
+};
+
+/* ---- eMMC ---- */
+/*
+ * TVbox: bus-width=8, supports-emmc, clock-frequency=0x23c3460=37500000
+ */
+&emmc {
+	status = "okay";
+	bus-width = <8>;
+	cap-mmc-highspeed;
+	supports-emmc;
+	disable-wp;
+	non-removable;
+	num-slots = <1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&emmc_clk &emmc_cmd &emmc_bus8>;
+};
+
+/* ---- SD カード ---- */
+/*
+ * TVbox: cd-gpios = GPIO1_C1 (gpio1, 17=0x11)
+ * broken-cd, power-inverted, supports-sd
+ */
+&sdmmc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_bus4>;
+	cd-gpios = <&gpio1 RK_PC1 GPIO_ACTIVE_LOW>;
+	supports-sd;
+	broken-cd;
+	cap-sd-highspeed;
+	card-detect-delay = <200>;
+};
+
+/* ---- SDIO (WiFi) ---- */
+&sdio {
+	status = "okay";
+	mmc-pwrseq = <&sdio_pwrseq>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	non-removable;
+	num-slots = <1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdio_clk &sdio_cmd &sdio_bus4>;
+};
+
+/* ---- USB ---- */
+
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
+
+&usb_host1_ehci {
+	status = "okay";
+};
+
+&usb_host1_ohci {
+	status = "okay";
+};
+
+&usb_host2_ehci {
+	status = "okay";
+};
+
+&usb_host2_ohci {
+	status = "okay";
+};
+
+/* ---- Ethernet (GMAC) ---- */
+/*
+ * TVbox: phy-mode="rmii", phy-type="internal"
+ * clock_in_out="output", tx_delay=0x26, rx_delay=0x11
+ * link-gpio = GPIO2_B6 (gpio2, 14=0x0e)
+ */
+&gmac {
+	assigned-clocks = <&cru SCLK_MAC_SRC>;
+	assigned-clock-rates = <50000000>;
+	clock_in_out = "output";
+	phy-supply = <&vcc_phy>;
+	phy-mode = "rmii";
+	phy-is-integrated;
+	tx_delay = <0x26>;
+	rx_delay = <0x11>;
+	status = "okay";
+};
+
+/* ---- VOP / Display ---- */
+&vop {
+	status = "okay";
+};
+
+&vop_mmu {
+	status = "okay";
+};
+
+/* ---- ビデオデコーダ ---- */
+&vpu_service {
+	status = "okay";
+};
+
+&vpu_mmu {
+	status = "okay";
+};
+
+&rkvdec {
+	status = "okay";
+};
+
+&rkvdec_mmu {
+	status = "okay";
+};
+
+/* ---- TVE (コンポジット出力) ---- */
+&tve {
+	status = "okay";
+};
+
+/* ---- UART ---- */
+/*
+ * UART0 (0x11010000): TVboxでは未使用 (status=disabled)
+ * pinctrl は uart0_xfer + uart0_cts + uart0_rts が利用可能
+ */
+&uart0 {
+	status = "disabled";
+};
+
+/*
+ * UART1 (0x11020000): TVboxでは Bluetooth に使用
+ * pinctrl-0 = uart11-xfer (GPIO3_B5/B4) + uart11-cts + clk-32k-out
+ * dma-names = "!tx", "!rx" → DMA無効でFIFO動作
+ * wireless-bluetooth ノードと連携
+ */
+&uart1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart11_xfer &uart11_cts &uart11_rts>;
+	dma-names = "!tx", "!rx";
+};
+
+/*
+ * UART2 (0x11030000): TVboxのデバッグコンソール
+ * fiq-debugger が serial-id=2 で参照 (baudrate=0x16e360=1500000)
+ * pinctrl-0 = uart21-xfer (GPIO1_B9/B10, func2)
+ * chosen { bootargs } に console=ttyFIQ0 が期待される
+ */
+&uart2 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart21_xfer>;
+};
+
+/* ---- pinctrl ---- */
+&pinctrl {
+	sdio-pwrseq {
+		wifi_enable_h: wifi-enable-h {
+			/* GPIO2_D2 = gpio2, pin 26 */
+			rockchip,pins = <2 26 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	usb {
+		host_vbus_drv: host-vbus-drv {
+			/* GPIO3_C4 = gpio3, pin 20 */
+			rockchip,pins = <3 RK_PC4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		otg_vbus_drv: otg-vbus-drv {
+			/* GPIO3_C6 = gpio3, RK_PC6 */
+			rockchip,pins = <3 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	sdmmc {
+		sdmmc_pwr: sdmmc-pwr {
+			/* GPIO1_B6 = gpio1, pin 14 */
+			rockchip,pins = <1 14 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
+
+/* ---- HDMI PHY ---- */
+/* TVbox: HDMI が動いていたので hdmi_phy も有効 */
+&hdmi_phy {
+	status = "okay";
+};
+
+/* ---- USB PHY (u2phy) ---- */
+/* TVbox: USB Host x3 + OTG が動作 → phy 本体も有効化が必要 */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+	vbus-supply = <&vcc_otg_vbus>;
+};
+
+&u2phy0_host {
+	status = "okay";
+	phy-supply = <&vcc_host>;
+};
+
+&u2phy1 {
+	status = "okay";
+};
+
+&u2phy1_otg {
+	status = "okay";
+};
+
+&u2phy1_host {
+	status = "okay";
+	phy-supply = <&vcc_host>;
+};
+
+/* ---- OTG ---- */
+/* TVbox: otg@30040000 が動作 */
+&usb_otg {
+	status = "okay";
+};
+
+/* ---- RGA2 (2D accelerator) ---- */
+/* TVbox: rga@20060000 は status 記述なし (デフォルトで動作) */
+&rk_rga {
+	status = "okay";
+};
+
+/* ---- IEP (Image Enhancement Processor) ---- */
+/* TVbox: iep@20070000 status="okay" */
+&iep {
+	status = "okay";
+};
+
+&iep_mmu {
+	status = "okay";
+};
+
+/* ---- NAND コントローラ ---- */
+/* TVbox: nandc@30030000 status="okay"
+ * 注意: mainline kernel にドライバ未マージ。
+ * CONFIG_MTD_NAND_ROCKCHIP が必要 (BSP kernel)。
+ * eMMC で起動する場合は不要な場合が多い。 */
+&nandc {
+	status = "okay";
+};
+
+/* ---- PWM3 (IR リモコン受信) ---- */
+/* TVbox: pwm@110b0030 compatible="rockchip,remotectl-pwm" status="okay"
+ * OSS では rockchip,remotectl-pwm ドライバ未マージ。
+ * gpio-ir-receiver で代替する場合は disabled のままにする。
+ * BSP kernel 使用時のみ有効。 */
+&pwm3 {
+	status = "okay";
+};
+
+/* ---- RNG / Crypto ---- */
+/* TVbox: crypto ハードウェアは存在 (disabled 設定だが HW あり)
+ * OSS の rng ノード (rockchip,cryptov1-rng) で有効化。
+ * CONFIG_CRYPTO_DEV_ROCKCHIP=y が必要。 */
+&rng {
+	status = "okay";
+};
+
+/* ---- サスペンド ---- */
+/* TVbox: rockchip_suspend ctrbits=0x11806
+ * OSS の sleep-mode-config に相当する設定で有効化。 */
+&rockchip_suspend {
+	status = "okay";
+};
